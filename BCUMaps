@@ -1,0 +1,114 @@
+library(imguR)
+library(sf)
+library(tidyverse)
+
+boroughs <- read_sf("https://data.london.gov.uk/download/london_boroughs/9502cdec-5df0-46e3-8aa1-2b5c5233a31f/London_Boroughs.gpkg") |> 
+  mutate(
+    bcu = case_match(
+      name,
+      c("Hackney", "Tower Hamlets") ~ "Central East",
+      c("Camden", "Islington") ~ "Central North",
+      c("Lambeth", "Southwark") ~ "Central South",
+      c("Hammersmith and Fulham", "Kensington and Chelsea", "Westminster") ~ 
+        "Central West",
+      c("Barking and Dagenham", "Havering", "Redbridge") ~ "East Area",
+      c("Enfield", "Haringey") ~ "North Area",
+      c("Newham", "Waltham Forest") ~ "North East",
+      c("Barnet", "Brent", "Harrow") ~ "North West",
+      c("Bromley", "Croydon", "Sutton") ~ "South Area",
+      c("Bexley", "Greenwich", "Lewisham") ~ "South East",
+      c(
+        "Kingston upon Thames", 
+        "Merton", 
+        "Richmond upon Thames", 
+        "Wandsworth"
+      ) ~ "South West",
+      c("Ealing", "Hillingdon", "Hounslow") ~ "West Area",
+      .default = name
+    ),
+    name = case_match(
+      name,
+      "Barking and Dagenham" ~ "Barking & Dagenham",
+      "Hammersmith and Fulham" ~ "Hammersmith & Fulham",
+      "Kensington and Chelsea" ~ "Kensington & Chelsea",
+      "Kingston upon Thames" ~ "Kingston",
+      "Richmond upon Thames" ~ "Richmond",
+      .default = name
+    )
+  )
+
+borough_centroids <- boroughs |> 
+  st_centroid() |> 
+  st_coordinates() |> 
+  as_tibble()
+
+bcu_boundaries <- boroughs |> 
+  group_by(bcu) |> 
+  summarise()
+
+london_boundary <- summarise(boroughs)
+  
+boroughs <- bind_cols(boroughs, borough_centroids)
+
+borough_urls <- boroughs |> 
+  filter(name != "City of London") |> 
+  pull("bcu") |> 
+  unique() |> 
+  set_names() |> 
+  map(function(this_bcu) {
+    
+    bcu_plot <- ggplot() + 
+      geom_sf(
+        data = london_boundary, 
+        colour = "white", 
+        fill = NA, 
+        linewidth = 1.5
+      ) +
+      geom_sf(data = boroughs, colour = "grey60", fill = "grey97") +
+      geom_sf(
+        data = filter(boroughs, bcu == this_bcu), 
+        colour = "grey50", 
+        fill = "#F6BE00"
+      ) +
+      geom_sf(
+        data = bcu_boundaries,
+        colour = "grey50",
+        fill = NA,
+        linewidth = 0.5
+      ) +
+      ggrepel::geom_label_repel(
+        aes(x = X, y = Y, label = str_wrap(name, 10)),
+        data = filter(boroughs, bcu == this_bcu),
+        alpha = 0.67,
+        colour = "black",
+        force = 0.5,
+        force_pull = 100,
+        label.padding = unit(0.1, "lines"),
+        label.size = NA,
+        lineheight = 0.9,
+        size = 3
+      ) +
+      scale_x_continuous(expand = c(0.01, 0)) +
+      scale_y_continuous(expand = c(0.01, 0)) +
+      labs(title = str_glue("{this_bcu} BCU")) +
+      theme_void() +
+      theme(plot.title = element_text(face = "bold"))
+
+    # The imgur package works with base graphics or image files, so save the
+    # plot to a temporary file and then upload that file next
+    ggsave(bcu_file <- tempfile(fileext = ".png"), bcu_plot, bg = "transparent")
+    
+    url <- imgur_upload(
+      bcu_file, 
+      title = str_glue(
+        "Metropolitan Police Service {this_bcu} Basic Command Unit"
+      ),
+      description = str_glue(
+        "Locator map for the Metropolitan Police Service {this_bcu} Basic ",
+        "Command Unit"
+      )
+    )
+    
+    url$link[[1]]
+
+  })
